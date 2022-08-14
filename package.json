@@ -1,0 +1,18 @@
+{
+  "name": "cloudinventory",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "async": "^3.2.4",
+    "axios": "^0.27.2",
+    "configstore": "^5.0.0",
+    "mustache": "^4.2.0",
+    "vorpal": "^1.12.0"
+  }
+}
