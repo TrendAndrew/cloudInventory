@@ -3,6 +3,20 @@ const axios = require('axios').default;
 const Mustache = require('mustache');
 const Configstore = require('configstore');
 const async = require('async');
+const commandLineArgs = require('command-line-args')
+
+const optionDefinitions = [
+  { name: 'silent', alias: 's', type: Boolean }
+]
+const options = function(){
+  try {
+    return commandLineArgs(optionDefinitions)
+  } catch(err) {
+    console.log('usage:\r\n\tnode index.js [-s|--silent]\r\n');
+    return
+  }
+}()
+if (!options) {return}
 
 let conformity = "https://conformity.{{region}}.cloudone.trendmicro.com/api"
 // todo: pre-load from settings?
@@ -72,6 +86,9 @@ function fetchData(commandInstance, callback) {
         }]
     }, callback);
 }
+
+
+console.log(options);
 
 
 vorpal
