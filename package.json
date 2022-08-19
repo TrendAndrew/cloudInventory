@@ -3,12 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "bin": "index.js",
   "scripts": {
-    "publish": "node deploy",
-    "deploy": "node deploy ghpages --push",
-    "release": "node deploy rls-tag",
-    "set-version": "node deploy set-version",
-    "pkg": "npm run set-version && npm exec pkg ."
+    "pkg": "npm exec pkg ."
   },
   "author": "",
   "license": "ISC",
@@ -17,20 +14,17 @@
     "axios": "^0.27.2",
     "command-line-args": "^5.2.1",
     "configstore": "^5.0.0",
+    "csv": "^6.2.0",
     "moment": "^2.29.4",
     "mustache": "^4.2.0",
     "vorpal": "^1.12.0"
   },
   "pkg": {
-    "assets": [
-      "dist/*",
-      "dev/*"
-    ],
     "targets": [
       "node16-linux-x64",
       "node16-macos-x64",
       "node16-win-x64"
     ],
-    "outputPath": "ss-bin"
+    "outputPath": "dist"
   }
 }

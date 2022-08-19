@@ -130,6 +130,5 @@ dist
 .pnp.*
 
 # ignore build artifacts
-/dev/build/
-/ss-bin/
+dist/**
 notes

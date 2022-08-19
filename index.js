@@ -4,6 +4,7 @@ const Mustache = require('mustache');
 const Configstore = require('configstore');
 const async = require('async');
 const moment = require('moment');
+const csv = require('csv');
 const commandLineArgs = require('command-line-args')
 
 const optionDefinitions = [
@@ -115,29 +116,29 @@ function fetchData(commandInstance, callback) {
 
             async.reduce(Object.values(accounts).sort(function (a, b) {
                 a.attributes.name.localeCompare(b.attributes.name)
-            }), {}, function(memo, account, callback) {
-                fetchReports(account.id, function(err, data) {
-                        if (err) { return callback(err); }
+            }), {}, function (memo, account, callback) {
+                fetchReports(account.id, function (err, data) {
+                    if (err) { return callback(err); }
 
-                        reportInfo = data.reduce(function(memo, report) {
-                            const attr = report.attributes;
-                            const id = attr['report-config-id'];
-                            const last = memo[id] || attr;
-                            return Object.assign({}, memo, {
-                                [id]: (attr['created-date'] > last['created-date'] ? attr : last)
-                            });
-                        }, {});
-
-                        commandInstance.log(`   ${account.attributes.name} (${account.attributes.environment}):`);
-                        Object.values(reportInfo).forEach(function(report) {
-                            const date = moment(report['created-date']);
-                            commandInstance.log(`       ${report.title}${report.daily ? ' (daily)' : ''} latest is ${date.fromNow()}`);
+                    reportInfo = data.reduce(function (memo, report) {
+                        const attr = report.attributes;
+                        const id = attr['report-config-id'];
+                        const last = memo[id] || attr;
+                        return Object.assign({}, memo, {
+                            [id]: (attr['created-date'] > last['created-date'] ? attr : last)
                         });
-                        callback(null, Object.assign({}, memo, {
-                            [account.id]: reportInfo
-                        }));
+                    }, {});
+
+                    commandInstance.log(`   ${account.attributes.name} (${account.attributes.environment}):`);
+                    Object.values(reportInfo).forEach(function (report) {
+                        const date = moment(report['created-date']);
+                        commandInstance.log(`       ${report.title}${report.daily ? ' (daily)' : ''} latest is ${date.fromNow()}`);
                     });
-            }, function(error, data) {
+                    callback(null, Object.assign({}, memo, {
+                        [account.id]: reportInfo
+                    }));
+                });
+            }, function (error, data) {
                 if (error) { return callback(error); }
                 reports = data;
                 config.set('reports', reports);
@@ -148,8 +149,26 @@ function fetchData(commandInstance, callback) {
     }, callback);
 }
 
-function downloadCSV(reportInfo, callback) {
-    const url = reportInfo.included.reduce(function(memo, entry) {
+function downloadCSV(commandInstance, url, callback) {
+    if (!url) { return callback(); } //- silently fail for now
+
+    axios.get(url,
+        // {
+        //   headers: {
+        //     "User-Agent":
+        //       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"
+        //   }
+        // }
+    ).then((response) => {
+        if (!response || !response.data) { return callback(); }
+        csv.parse(response.data, {
+            columns: true
+        }, callback);
+    }).catch(callback);
+}
+
+function authAndDownloadCSV(commandInstance, reportInfo, callback) {
+    const url = reportInfo.included.reduce(function (memo, entry) {
         if (entry.type === 'CSV') {
             return entry["report-download-endpoint"];
         }
@@ -158,17 +177,21 @@ function downloadCSV(reportInfo, callback) {
 
     if (!url) { return callback(); } //- silently fail for now
 
-    axios.get(url,
-    // {
-    //   headers: {
-    //     "User-Agent":
-    //       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"
-    //   }
-    // }
-    ).then((res) => {
-        console.log(res);
-        callback('1,2,3');
-    });
+    //    commandInstance.log(url, reportInfo);
+    axios({
+        method: 'get',
+        url: url,
+        json: true,
+        headers: {
+            Authorization: `ApiKey ${apiKey}`,
+            'Api-Version': 'v1',
+            'Content-Type': 'application/vnd.api+json'
+        }
+    }).then((response) => {
+        const url = response && response.data && response.data.url;
+        if (!url) { commandInstance.log("report not found"); return callback(); }
+        downloadCSV(commandInstance, url, callback);
+    }).catch(callback);
 }
 
 function generateReport(commandInstance, callback) {
@@ -176,46 +199,78 @@ function generateReport(commandInstance, callback) {
 
     async.auto({
         // get the latest reports in parallel
-        reports: function(callback) {
-            async.map(accountIds, function(accountId, callback) {
-                fetchReports(accountId, function(err, data) {
+        reports: function (callback) {
+            commandInstance.log("\nChecking latest reports...");
+            async.map(accountIds, function (accountId, callback) {
+                const account = accounts[accountId];
+                const reportId = mappings[accountId];
+                fetchReports(accountId, function (err, data) {
                     if (err) { return callback(err); }
 
-                    reportInfo = data.reduce(function(memo, report) {
+                    reportInfo = data.reduce(function (memo, report) {
                         const attr = report.attributes;
+                        if (!reportId || (attr['report-config-id'] !== reportId)) { return memo; }
                         const id = attr['report-config-id'];
                         const last = memo[id] || attr;
-                        return Object.assign({}, memo, {
-                            [id]: (attr['created-date'] > last['created-date'] ? attr : last)
-                        });
+                        return Object.assign({}, memo, (attr['created-date'] > last['created-date'] ? attr : last));
                     }, {});
-                    
+
                     // here we have the exact report we need to use for this account
                     // fetch the data
-                    downloadCSV(reportInfo, function(err, csv) {
+                    // commandInstance.log(reportInfo);
+                    commandInstance.log(`Retrieving latest "${reportInfo.title}" for ${account && account.attributes && account.attributes.name}...`);
+                    authAndDownloadCSV(commandInstance, reportInfo, function (err, csv) {
                         callback(err, {
-                            accountId : accountId,
-                            reportInfo : reportInfo,
-                            csv : csv
+                            account: account,
+                            reportInfo: reportInfo,
+                            csv: csv
                         });
                     });
                 });
             }, callback);
         },
 
-        csv: ['reports', function(data, callback) {
+        csv: ['reports', function (data, callback) {
             // massage all the data to arrive at the final csv output
-            callback(null, 'fred');
+            // commandInstance.log('Summarising...');
+            //commandInstance.log(data && data.reports);
+
+            const summary = ((data && data.reports) || []).reduce(function(memo, item) {
+                // commandInstance.log(item);
+                return (item.csv || []).reduce(function(memo, row) {
+                    // commandInstance.log(row);
+                    if (row.Resource.length > 0) {
+                        const key = item.account.id + '|' + row.Service + '|' + row.Region + '|' + row.Resource;
+                        memo[key] = {
+                            "account" : `${item.account.attributes.name} (${item.account.attributes.environment})`,
+                            "service" : row.Service,
+                            "region" : row.Region,
+                            "resource" : row.Resource
+                        };
+                    }
+                    return memo;
+                }, memo);
+            }, {});
+
+            csv.stringify(Object.values(summary),  {
+                header: true,
+                quoted: true
+            }, callback);
         }]
-    }, function(err, data) {
-        console.log(err, data);
+    }, function (err, data) {
         if (callback) { callback(err, data && data.csv); }
     });
 }
 
 if (options.silent) {
     return generateReport({
-        log: (err) => {console.error(err)}
+        log: (err) => { console.error(err) },
+        error: (err) => { console.error(err) }
+    }, function(err, csv) {
+        if (err) {
+            return console.error(err);
+        }
+        console.log(csv);
     });
 }
 
@@ -264,7 +319,6 @@ function listAccounts(commandInstance, callback) {
         commandInstance.log("No accounts, try running 'fetch'.");
         return;
     }
-    console.log(mappings);
     Object.values(accounts)
         .sort(function (a, b) { a.attributes.name < b.attributes.name })
         .forEach(function (account) {
@@ -272,7 +326,7 @@ function listAccounts(commandInstance, callback) {
             const accountReports = account.id && reports[account.id];
             const report = accountReports && accountReports[reportId];
             const display = report ? `${report.title}${report.daily ? ' (daily)' : ''}` : `no report assigned, please use "set ${account.attributes.name}" command`;
-        commandInstance.log(`   ${account.attributes.name} (${account.attributes.environment}) : ${display}`);
+            commandInstance.log(`   ${account.attributes.name} (${account.attributes.environment}) : ${display}`);
         });
     if (callback) { callback(); }
 }
@@ -280,9 +334,9 @@ function listAccounts(commandInstance, callback) {
 function showConfig(commandInstance, callback) {
     if (region) {
         commandInstance.log(`\nusing region: ${region}`);
-        listAccounts(commandInstance, function(err) {
+        listAccounts(commandInstance, function (err) {
             if (err) {
-                return (callback || (() => {}))(err);
+                return (callback || (() => { }))(err);
             }
         });
     } else {
@@ -294,7 +348,7 @@ function showConfig(commandInstance, callback) {
 
 vorpal
     .command('config', 'Displays current configuration.')
-    .action(function(args, callback) {
+    .action(function (args, callback) {
         showConfig(this, callback);
     });
 
@@ -304,7 +358,7 @@ vorpal
         const args = vorpal.ui.input().split(' ');
         if (args.length > 3) { return []; }
         if (args.length > 2) {
-            const id = Object.values(accounts).reduce(function(memo, account) {
+            const id = Object.values(accounts).reduce(function (memo, account) {
                 if (account.attributes.name == args[1]) {
                     return account.id;
                 }
@@ -315,18 +369,18 @@ vorpal
             return Object.values(reports[id] || {}).map((report) => `"${report.title}"`).sort();
         }
         return Object.values(accounts).map((account) => account.attributes.name).sort();
-    })  
-    .action(function(args, callback) {
+    })
+    .action(function (args, callback) {
         const commandInstance = this;
         //commandInstance.log(args);
-        const account = Object.values(accounts).reduce(function(memo, account) {
+        const account = Object.values(accounts).reduce(function (memo, account) {
             if (account.attributes.name == args.account) {
                 return account;
             }
             return memo;
         }, null);
         if (!account) { return callback(new Error("Account not found")); }
-        const report = Object.values(reports[account.id] || {}).reduce(function(memo, report) {
+        const report = Object.values(reports[account.id] || {}).reduce(function (memo, report) {
             if (report.title == args.report) {
                 return report;
             }
@@ -343,11 +397,11 @@ vorpal
 
 vorpal
     .command('generate [filename]', 'Generate the summary report in csv.')
-    .action(function(args, callback) {
+    .action(function (args, callback) {
         generateReport(this, callback);
     });
 
-  // first display configuration
+// first display configuration
 showConfig(vorpal);
 
 vorpal
