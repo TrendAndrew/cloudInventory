@@ -128,3 +128,8 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# ignore build artifacts
+/dev/build/
+/ss-bin/
+notes
