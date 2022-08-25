@@ -132,3 +132,6 @@ dist
 # ignore build artifacts
 dist/**
 notes
+
+#ignore run artifacts
+.dccache
